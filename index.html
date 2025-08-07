@@ -1,50 +1,22 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <title>ESP32 Door Control</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-    button {
-      font-size: 18px;
-      padding: 10px 30px;
-      margin: 10px;
-    }
-    #status {
-      margin-top: 20px;
-      font-size: 16px;
-    }
-  </style>
-</head>
-<body>
-  <h1>ESP32 Door Controller</h1>
+  <head>
+    <title>Garage Controller</title>
+  </head>
+  <body>
+    <h2>Open Door</h2>
+    <button onclick="openDoor('door1')">Open Door 1</button>
+    <button onclick="openDoor('door2')">Open Door 2</button>
 
-  <button onclick="triggerDoor('door1')">Open Door 1</button>
-  <button onclick="triggerDoor('door2')">Open Door 2</button>
-
-  <div id="status">Ready</div>
-
-  <script>
-    const dbURL = "https://esp32-led-control-iot-default-rtdb.firebaseio.com/";
-
-    async function triggerDoor(door) {
-      try {
-        const res = await fetch(dbURL + ".json", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            doorCommand: door
-          })
+    <script>
+      async function openDoor(door) {
+        await fetch('https://esp32-garage-controller-default-rtdb.firebaseio.com/doorCommand.json', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(door)
         });
-        document.getElementById("status").innerText = `Triggered ${door}`;
-      } catch (e) {
-        document.getElementById("status").innerText = "Failed to send command.";
+        console.log(`Sent: ${door}`);
       }
-    }
-  </script>
-</body>
+    </script>
+  </body>
 </html>
