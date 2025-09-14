@@ -1,159 +1,312 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include <WiFiManager.h>
 
-const int ledPin = 2;
-const int door1Pin = 33;
-const int door2Pin = 18;
+// ========= FILL THESE =========
+const char* TOKEN_SERVER_URL = "https://quincy-garage.vercel.app/api/iot-token";  // your Vercel route
+const char* IOT_API_KEY      = "7f9c2ba4e88f827d616045507605853ed73b8093f6b0f7f0a5b1c2d3e4f50617"; // same as Vercel env
+const char* WEB_API_KEY      = "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU"; // from firebaseConfig in index.html
+const char* DEVICE_ID        = "esp32-1"; // label for this device
 
-const char* baseURL = "https://esp32-garage-controller-default-rtdb.firebaseio.com/";
+// ========= CONSTANTS =========
+const char* RTDB_URL = "https://esp32-garage-controller-default-rtdb.firebaseio.com"; // no trailing slash
 
-unsigned long lastCheck = 0;
-unsigned long checkInterval = 250;
+// GPIOs
+const int LED_PIN   = 2;   // ESP32 onboard LED
+const int DOOR1_PIN = 18;  // garage door trigger 1 (active LOW)
+const int DOOR2_PIN = 33;  // garage door trigger 2 (active LOW)
 
+// Polling
+unsigned long lastPollMs = 0;
+const unsigned long POLL_MS = 500;
+
+// Pulse state
 bool isPulsing = false;
-int pulseCount = 0;
+int  pulseCount = 0;
 unsigned long pulseTimer = 0;
-int pulseInterval = 300;
-String lastCommand = "";
+const int PULSE_INTERVAL_MS = 300; // toggle every 300ms → 3 blinks (6 toggles)
 
-void updateStatus(const String& status);
-void updateTimestamp();
-void finishPulse();
-void triggerDoor(int pin);
+// Auth state
+String g_idToken;
+String g_refreshToken;
+unsigned long g_tokenExpiryMs = 0;
 
-void setup() {
-  Serial.begin(9600);
-  pinMode(ledPin, OUTPUT);
-  pinMode(door1Pin, OUTPUT);
-  pinMode(door2Pin, OUTPUT);
-  digitalWrite(door1Pin, HIGH);
-  digitalWrite(door2Pin, HIGH);
-
-  // Blink LED while connecting to Wi-Fi
-  WiFiManager wm;
-  int blinkCount = 0;
-  while (!wm.autoConnect("ESP32-Setup", "esp32pass")) {
-    digitalWrite(ledPin, blinkCount % 2 == 0 ? HIGH : LOW);
-    delay(300);
-    blinkCount++;
-    if (blinkCount > 20) {
-      Serial.println("WiFi connect failed. Restarting...");
-      ESP.restart();
-    }
+// ===== Utilities =====
+bool waitForTime(unsigned long timeoutMs = 10000) {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  unsigned long start = millis();
+  time_t now;
+  while (millis() - start < timeoutMs) {
+    time(&now);
+    if (now > 1700000000) return true; // ~2023+
+    delay(200);
   }
-
-  digitalWrite(ledPin, HIGH); // Solid when connected
-  Serial.println("WiFi connected to: " + WiFi.SSID());
-  configTime(0, 0, "pool.ntp.org");
+  return false;
 }
 
-void loop() {
-  Serial.println("loop running"); // DEBUG
-
-  unsigned long now = millis();
-
-  if (isPulsing && now - pulseTimer >= pulseInterval) {
-    digitalWrite(ledPin, !digitalRead(ledPin));
-    pulseTimer = now;
-    pulseCount++;
-    if (pulseCount >= 6) finishPulse();
-  }
-
-  if (!isPulsing && now - lastCheck >= checkInterval) {
-    lastCheck = now;
-
-    HTTPClient http;
-    http.begin(String(baseURL) + ".json");
-    int code = http.GET();
-
-    if (code == 200) {
-      String payload = http.getString();
-      DynamicJsonDocument doc(1024);
-      DeserializationError err = deserializeJson(doc, payload);
-      if (err) {
-        Serial.println("Failed to parse JSON");
-        http.end();
-        return;
-      }
-
-      String command = doc["ledCommand"] | "off";
-      String doorCommand = doc["doorCommand"] | "none";
-      bool received = doc["ledReceived"] | false;
-
-      Serial.print("Command: "); Serial.println(command);
-      Serial.print("Firebase doorCommand: "); Serial.println(doorCommand); // DEBUG
-
-      if (!received || command != lastCommand || doorCommand != "none") {
-
-        if (command == "on") {
-          digitalWrite(ledPin, HIGH);
-          updateStatus("on");
-        } else if (command == "off") {
-          digitalWrite(ledPin, LOW);
-          updateStatus("off");
-        } else if (command == "pulse") {
-          pulseCount = 0;
-          isPulsing = true;
-          pulseTimer = now;
-          digitalWrite(ledPin, HIGH);
-        }
-
-        if (doorCommand == "door1") {
-          triggerDoor(door1Pin);
-        } else if (doorCommand == "door2") {
-          triggerDoor(door2Pin);
-        }
-
-        lastCommand = command;
-
-        HTTPClient patch;
-        patch.begin(String(baseURL) + ".json");
-        patch.addHeader("Content-Type", "application/json");
-        patch.PATCH("{\"ledReceived\":true, \"doorCommand\":\"none\"}");
-        patch.end();
-
-        updateTimestamp();
-      }
-    }
-    http.end();
-  }
-}
-
-void updateStatus(const String& state) {
+bool httpsPOSTJson(WiFiClientSecure& client, const String& url, const String& body, const String* hName, const String* hVal, String& out) {
   HTTPClient http;
-  http.begin(String(baseURL) + "ledStatus.json");
+  http.begin(client, url);
   http.addHeader("Content-Type", "application/json");
-  http.PUT("\"" + state + "\"");
+  if (hName && hVal) http.addHeader(*hName, *hVal);
+  int code = http.POST(body);
+  if (code > 0) out = http.getString();
+  else Serial.printf("HTTP POST failed: %s\n", http.errorToString(code).c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+bool httpsPOSTForm(WiFiClientSecure& client, const String& url, const String& form, String& out) {
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = http.POST(form);
+  if (code > 0) out = http.getString();
+  else Serial.printf("HTTP POST failed: %s\n", http.errorToString(code).c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+bool httpsGET(WiFiClientSecure& client, const String& url, String& out) {
+  HTTPClient http;
+  http.begin(client, url);
+  int code = http.GET();
+  if (code > 0) out = http.getString();
+  else Serial.printf("HTTP GET failed: %s\n", http.errorToString(code).c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+bool httpsPATCHJson(WiFiClientSecure& client, const String& url, const String& body, String* out = nullptr) {
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.PATCH(body);
+  if (out && code > 0) *out = http.getString();
+  else if (code <= 0) Serial.printf("HTTP PATCH failed: %s\n", http.errorToString(code).c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+// ===== Auth flow =====
+bool getCustomToken(String& customToken) {
+  WiFiClientSecure client; client.setInsecure(); // TODO: install CA certs for prod
+  DynamicJsonDocument doc(256);
+  doc["deviceId"] = DEVICE_ID;
+  String body; serializeJson(doc, body);
+
+  String out;
+  String hName = "x-api-key";
+  String hVal  = IOT_API_KEY;
+
+  if (!httpsPOSTJson(client, TOKEN_SERVER_URL, body, &hName, &hVal, out)) {
+    Serial.println("Custom token request failed");
+    return false;
+  }
+
+  DynamicJsonDocument resp(1024);
+  if (deserializeJson(resp, out)) {
+    Serial.println("Custom token parse failed");
+    Serial.println(out);
+    return false;
+  }
+  if (!resp.containsKey("customToken")) {
+    Serial.println("No customToken in response");
+    Serial.println(out);
+    return false;
+  }
+  customToken = resp["customToken"].as<String>();
+  return true;
+}
+
+bool exchangeCustomForIdToken(const String& customToken) {
+  WiFiClientSecure client; client.setInsecure();
+  String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=" + String(WEB_API_KEY);
+
+  DynamicJsonDocument req(512);
+  req["token"] = customToken;
+  req["returnSecureToken"] = true;
+  String body; serializeJson(req, body);
+
+  String out;
+  if (!httpsPOSTJson(client, url, body, nullptr, nullptr, out)) {
+    Serial.println("signInWithCustomToken failed");
+    return false;
+  }
+
+  DynamicJsonDocument resp(2048);
+  if (deserializeJson(resp, out)) {
+    Serial.println("signInWithCustomToken parse failed");
+    Serial.println(out);
+    return false;
+  }
+
+  g_idToken      = resp["idToken"].as<String>();
+  g_refreshToken = resp["refreshToken"].as<String>();
+  int expiresIn  = atoi(resp["expiresIn"] | "3600");
+  g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL; // refresh 60s early
+
+  Serial.println("ID token obtained.");
+  return g_idToken.length() > 0;
+}
+
+bool refreshIdToken() {
+  if (g_refreshToken.isEmpty()) return false;
+  WiFiClientSecure client; client.setInsecure();
+  String url = "https://securetoken.googleapis.com/v1/token?key=" + String(WEB_API_KEY);
+  String form = "grant_type=refresh_token&refresh_token=" + g_refreshToken;
+
+  String out;
+  if (!httpsPOSTForm(client, url, form, out)) {
+    Serial.println("Refresh token request failed");
+    return false;
+  }
+
+  DynamicJsonDocument resp(2048);
+  if (deserializeJson(resp, out)) {
+    Serial.println("Refresh parse failed");
+    Serial.println(out);
+    return false;
+  }
+
+  g_idToken      = resp["id_token"].as<String>();
+  g_refreshToken = resp["refresh_token"].as<String>();
+  int expiresIn  = atoi(resp["expires_in"] | "3600");
+  g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL;
+
+  Serial.println("ID token refreshed.");
+  return g_idToken.length() > 0;
+}
+
+bool ensureIdToken() {
+  if (g_idToken.length() > 0 && (long)(g_tokenExpiryMs - millis()) > 0) return true;
+  if (!g_refreshToken.isEmpty()) return refreshIdToken();
+  String customToken;
+  if (!getCustomToken(customToken)) return false;
+  return exchangeCustomForIdToken(customToken);
+}
+
+// ===== App logic =====
+void writeField(const char* key, const String& valueJson) {
+  if (!ensureIdToken()) return;
+  WiFiClientSecure client; client.setInsecure();
+  String url = String(RTDB_URL) + "/" + key + ".json?auth=" + g_idToken;
+
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  http.PUT(valueJson);
   http.end();
 }
+
+void updateStatus(const String& s) { writeField("ledStatus", "\"" + s + "\""); }
 
 void updateTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return;
+  if (!ensureIdToken()) return;
+  time_t now = time(nullptr);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)now);
+  writeField("lastUpdated", String(buf));
+}
 
-  char buffer[64];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-
-  HTTPClient http;
-  http.begin(String(baseURL) + "lastUpdated.json");
-  http.addHeader("Content-Type", "application/json");
-  http.PUT("\"" + String(buffer) + "\"");
-  http.end();
+void triggerDoor(int pin) {
+  digitalWrite(pin, LOW);   // active LOW pulse
+  delay(300);
+  digitalWrite(pin, HIGH);
+  Serial.printf("Triggered door pin %d\n", pin);
 }
 
 void finishPulse() {
   isPulsing = false;
-  digitalWrite(ledPin, LOW);
+  digitalWrite(LED_PIN, LOW);
   updateStatus("off");
 }
 
-void triggerDoor(int pin) {
-  digitalWrite(pin, LOW);
-  delay(300);
-  digitalWrite(pin, HIGH);
-  Serial.print("Triggered pin: ");
-  Serial.println(pin);
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(DOOR1_PIN, OUTPUT);
+  pinMode(DOOR2_PIN, OUTPUT);
+  digitalWrite(DOOR1_PIN, HIGH); // idle HIGH
+  digitalWrite(DOOR2_PIN, HIGH);
+
+  WiFiManager wm;
+  if (!wm.autoConnect("ESP32-Setup", "esp32pass")) {
+    Serial.println("WiFi failed. Rebooting...");
+    delay(2000);
+    ESP.restart();
+  }
+  Serial.print("WiFi OK. IP: "); Serial.println(WiFi.localIP());
+  waitForTime(); // TLS sanity (still using setInsecure for now)
+}
+
+void loop() {
+  unsigned long nowMs = millis();
+
+  // Handle LED pulse
+  if (isPulsing && nowMs - pulseTimer >= (unsigned long)PULSE_INTERVAL_MS) {
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    pulseTimer = nowMs;
+    pulseCount++;
+    if (pulseCount >= 6) finishPulse(); // 3 full blinks
+  }
+
+  if (!isPulsing && nowMs - lastPollMs >= POLL_MS) {
+    lastPollMs = nowMs;
+
+    if (!ensureIdToken()) {
+      Serial.println("Auth not ready; retrying…");
+      return;
+    }
+
+    WiFiClientSecure client; client.setInsecure();
+    String url = String(RTDB_URL) + "/.json?auth=" + g_idToken;
+
+    HTTPClient http;
+    if (!http.begin(client, url)) {
+      Serial.println("[HTTP] begin() failed");
+      return;
+    }
+
+    int code = http.GET();
+    if (code == 200) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(1024);
+      if (!deserializeJson(doc, payload)) {
+        String ledCmd  = doc["ledCommand"]  | "off";
+        String doorCmd = doc["doorCommand"] | "none";
+
+        // LED
+        if (ledCmd == "on") {
+          digitalWrite(LED_PIN, HIGH);
+          updateStatus("on");
+        } else if (ledCmd == "off") {
+          digitalWrite(LED_PIN, LOW);
+          updateStatus("off");
+        } else if (ledCmd == "pulse") {
+          isPulsing = true; pulseCount = 0; pulseTimer = nowMs;
+          digitalWrite(LED_PIN, HIGH);
+          updateStatus("pulsing");
+        }
+
+        // Doors
+        if (doorCmd == "door1") triggerDoor(DOOR1_PIN);
+        else if (doorCmd == "door2") triggerDoor(DOOR2_PIN);
+
+        // Acknowledge & clear one-shot door command
+        String patchUrl = String(RTDB_URL) + "/.json?auth=" + g_idToken;
+        httpsPATCHJson(client, patchUrl, "{\"ledReceived\":true,\"doorCommand\":\"none\"}");
+        updateTimestamp();
+      } else {
+        Serial.println("JSON parse error");
+      }
+    } else {
+      Serial.printf("[HTTP] GET failed: %s\n", http.errorToString(code).c_str());
+    }
+    http.end();
+  }
 }
