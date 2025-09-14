@@ -1,22 +1,83 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <title>Garage Controller</title>
-  </head>
-  <body>
-    <h2>Open Door</h2>
-    <button onclick="openDoor('door1')">Open Door 1</button>
-    <button onclick="openDoor('door2')">Open Door 2</button>
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32 Garage Controller</title>
+  <script type="module">
+    // Firebase imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    <script>
-      async function openDoor(door) {
-        await fetch('https://esp32-garage-controller-default-rtdb.firebaseio.com/doorCommand.json', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(door)
-        });
-        console.log(`Sent: ${door}`);
+    // Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU",   // ✅ updated key
+      authDomain: "esp32-garage-controller.firebaseapp.com",
+      databaseURL: "https://esp32-garage-controller-default-rtdb.firebaseio.com",
+      projectId: "esp32-garage-controller",
+      storageBucket: "esp32-garage-controller.appspot.com",
+      messagingSenderId: "390563066349",
+      appId: "1:390563066349:web:79232495e3dfb21631f7e4"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    const db = getDatabase(app);
+
+    // Elements
+    const loginBtn = document.getElementById("login-btn");
+    const logoutBtn = document.getElementById("logout-btn");
+    const controls = document.getElementById("controls");
+    const status = document.getElementById("status");
+
+    // Auth buttons
+    loginBtn.onclick = () => signInWithPopup(auth, provider).catch(console.error);
+    logoutBtn.onclick = () => signOut(auth).catch(console.error);
+
+    // Auth state
+    onAuthStateChanged(auth, user => {
+      if (user) {
+        status.innerText = `Logged in as: ${user.email}`;
+        loginBtn.style.display = "none";
+        logoutBtn.style.display = "inline";
+        controls.style.display = "block";
+      } else {
+        status.innerText = "Not signed in";
+        loginBtn.style.display = "inline";
+        logoutBtn.style.display = "none";
+        controls.style.display = "none";
       }
-    </script>
-  </body>
+    });
+
+    // Send command to DB
+    function sendCommand(path, value) {
+      console.log(`Sending ${value} to ${path}`);
+      set(ref(db, path), value)
+        .then(() => console.log("✅ Success"))
+        .catch(err => console.error("❌ Error writing to DB:", err));
+    }
+
+    // Expose function globally for HTML buttons
+    window.sendCommand = sendCommand;
+  </script>
+</head>
+<body>
+  <h1>ESP32 Garage Controller</h1>
+
+  <p id="status">Checking login...</p>
+
+  <button id="login-btn">Sign in with Google</button>
+  <button id="logout-btn" style="display:none">Sign Out</button>
+
+  <div id="controls" style="display:none">
+    <button onclick="sendCommand('ledCommand', 'on')">LED ON</button>
+    <button onclick="sendCommand('ledCommand', 'off')">LED OFF</button>
+    <button onclick="sendCommand('ledCommand', 'pulse')">LED PULSE</button>
+    <br><br>
+    <button onclick="sendCommand('doorCommand', 'door1')">Open Door 1</button>
+    <button onclick="sendCommand('doorCommand', 'door2')">Open Door 2</button>
+  </div>
+</body>
 </html>
