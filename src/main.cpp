@@ -37,6 +37,7 @@ String lastLedCmd  = "init";
 String g_idToken;
 String g_refreshToken;
 unsigned long g_tokenExpiryMs = 0;
+int g_refreshFailCount = 0;   // auto-recover guard
 
 // ===== Utilities =====
 bool waitForTime(unsigned long timeoutMs = 10000) {
@@ -170,42 +171,77 @@ bool exchangeCustomForIdToken(const String& customToken) {
   g_refreshToken = json["refreshToken"].as<String>();
   int expiresIn  = atoi(json["expiresIn"] | "3600");
   g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL;
+  g_refreshFailCount = 0;
 
   Serial.println("ID token obtained.");
   return g_idToken.length() > 0;
 }
 
+// --- FIXED: memory-safe refresh + auto-recover ---
 bool refreshIdToken() {
   if (g_refreshToken.isEmpty()) return false;
+
   WiFiClientSecure client; client.setInsecure();
   String url = "https://securetoken.googleapis.com/v1/token?key=" + String(WEB_API_KEY);
   String form = "grant_type=refresh_token&refresh_token=" + g_refreshToken;
 
-  String out;
-  if (!httpsPOSTForm(client, url, form, out)) {
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  http.setTimeout(15000);
+  int code = http.POST(form);
+  String out = http.getString();
+  http.end();
+
+  Serial.printf("refresh HTTP %d\n", code);
+  if (out.length()) {
+    // Uncomment if you need to inspect occasionally:
+    // Serial.println(out);
+  }
+  if (code < 200 || code >= 300) {
     Serial.println("Refresh token request failed");
+    g_refreshFailCount++;
     return false;
   }
 
-  DynamicJsonDocument resp(2048);
-  if (deserializeJson(resp, out)) {
-    Serial.println("Refresh parse failed");
-    Serial.println(out);
+  // Parse only needed fields; allocate enough for long tokens
+  DynamicJsonDocument doc(4096);
+  // (Filter is optional here; capacity already big enough)
+  DeserializationError err = deserializeJson(doc, out);
+  if (err) {
+    Serial.printf("Refresh parse failed: %s\n", err.c_str());
+    g_refreshFailCount++;
     return false;
   }
 
-  g_idToken      = resp["id_token"].as<String>();
-  g_refreshToken = resp["refresh_token"].as<String>();
-  int expiresIn  = atoi(resp["expires_in"] | "3600");
+  g_idToken      = doc["id_token"].as<String>();
+  g_refreshToken = doc["refresh_token"].as<String>();
+  int expiresIn  = atoi(doc["expires_in"] | "3600");
   g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL;
+  g_refreshFailCount = 0;
 
   Serial.println("ID token refreshed.");
   return g_idToken.length() > 0;
 }
 
 bool ensureIdToken() {
+  // Still valid?
   if (g_idToken.length() > 0 && (long)(g_tokenExpiryMs - millis()) > 0) return true;
-  if (!g_refreshToken.isEmpty()) return refreshIdToken();
+
+  // Try refresh first
+  if (!g_refreshToken.isEmpty()) {
+    if (refreshIdToken()) return true;
+
+    // If refresh keeps failing, fall back to a new sign-in
+    if (g_refreshFailCount >= 2) {
+      Serial.println("Refresh failed twice; getting a new custom token.");
+      g_idToken = "";
+      g_refreshToken = "";
+      g_refreshFailCount = 0;
+    }
+  }
+
+  // Fresh sign-in
   String customToken;
   if (!getCustomToken(customToken)) return false;
   return exchangeCustomForIdToken(customToken);
@@ -325,7 +361,7 @@ void loop() {
           if (doorCmd == "door1")      triggerDoor(DOOR1_PIN);
           else if (doorCmd == "door2") triggerDoor(DOOR2_PIN);
 
-          // ACK + clear (allowed by Step A rule)
+          // ACK + clear (allowed by rules)
           String patchUrl = String(RTDB_URL) + "/.json?auth=" + g_idToken;
           bool ok = httpsPATCHJson(client, patchUrl, "{\"doorCommand\":\"none\",\"ledReceived\":true}");
           if (ok) lastDoorCmd = "none";    // cleared successfully
