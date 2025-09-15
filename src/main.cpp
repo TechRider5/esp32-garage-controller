@@ -29,6 +29,10 @@ int  pulseCount = 0;
 unsigned long pulseTimer = 0;
 const int PULSE_INTERVAL_MS = 300; // toggle every 300ms → 3 blinks (6 toggles)
 
+// Edge-trigger memory
+String lastDoorCmd = "none";
+String lastLedCmd  = "init";
+
 // Auth state
 String g_idToken;
 String g_refreshToken;
@@ -93,61 +97,79 @@ bool httpsPATCHJson(WiFiClientSecure& client, const String& url, const String& b
 
 // ===== Auth flow =====
 bool getCustomToken(String& customToken) {
-  WiFiClientSecure client; client.setInsecure(); // TODO: install CA certs for prod
-  DynamicJsonDocument doc(256);
-  doc["deviceId"] = DEVICE_ID;
-  String body; serializeJson(doc, body);
+  WiFiClientSecure client; 
+  client.setInsecure(); // TODO: install real CA certs for prod
 
-  String out;
-  String hName = "x-api-key";
-  String hVal  = IOT_API_KEY;
+  // Send deviceId via query string to avoid server body parsing issues
+  String url = String(TOKEN_SERVER_URL) + "?deviceId=" + DEVICE_ID;
 
-  if (!httpsPOSTJson(client, TOKEN_SERVER_URL, body, &hName, &hVal, out)) {
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("x-api-key", IOT_API_KEY);
+  http.addHeader("Content-Type", "application/json");
+
+  // Empty JSON body is fine since deviceId is in the query string
+  int code = http.POST("{}");
+  String payload = http.getString();
+  http.end();
+
+  Serial.printf("iot-token HTTP %d\n", code);
+  if (payload.length()) {
+    Serial.println("iot-token resp:");
+    Serial.println(payload);
+  }
+  if (code < 200 || code >= 300) {
     Serial.println("Custom token request failed");
     return false;
   }
 
-  DynamicJsonDocument resp(1024);
-  if (deserializeJson(resp, out)) {
-    Serial.println("Custom token parse failed");
-    Serial.println(out);
+  DynamicJsonDocument resp(2048);
+  DeserializationError err = deserializeJson(resp, payload);
+  if (err) {
+    Serial.println("Failed to parse custom token response");
+    Serial.println(payload);
     return false;
   }
-  if (!resp.containsKey("customToken")) {
-    Serial.println("No customToken in response");
-    Serial.println(out);
-    return false;
-  }
-  customToken = resp["customToken"].as<String>();
-  return true;
+  customToken = resp["customToken"] | "";
+  Serial.printf("customToken len = %d\n", customToken.length());
+
+  return customToken.length() > 0;
 }
 
 bool exchangeCustomForIdToken(const String& customToken) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client; 
+  client.setInsecure(); // TODO: use real CA in prod
+
   String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=" + String(WEB_API_KEY);
 
-  DynamicJsonDocument req(512);
-  req["token"] = customToken;
-  req["returnSecureToken"] = true;
-  String body; serializeJson(req, body);
+  // Build JSON manually to avoid ArduinoJson buffer limits
+  String body = "{\"token\":\"" + customToken + "\",\"returnSecureToken\":true}";
 
-  String out;
-  if (!httpsPOSTJson(client, url, body, nullptr, nullptr, out)) {
-    Serial.println("signInWithCustomToken failed");
-    return false;
+  HTTPClient http;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(15000);
+
+  int code = http.POST(body);
+  String resp = http.getString();
+  http.end();
+
+  Serial.printf("signInWithCustomToken HTTP %d\n", code);
+  Serial.printf("body len=%d, token len=%d\n", body.length(), customToken.length());
+  if (resp.length()) {
+    Serial.println("signInWithCustomToken resp:");
+    Serial.println(resp);
   }
 
-  DynamicJsonDocument resp(2048);
-  if (deserializeJson(resp, out)) {
-    Serial.println("signInWithCustomToken parse failed");
-    Serial.println(out);
-    return false;
-  }
+  if (code < 200 || code >= 300) return false;
 
-  g_idToken      = resp["idToken"].as<String>();
-  g_refreshToken = resp["refreshToken"].as<String>();
-  int expiresIn  = atoi(resp["expiresIn"] | "3600");
-  g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL; // refresh 60s early
+  DynamicJsonDocument json(4096);
+  if (deserializeJson(json, resp)) return false;
+
+  g_idToken      = json["idToken"].as<String>();
+  g_refreshToken = json["refreshToken"].as<String>();
+  int expiresIn  = atoi(json["expiresIn"] | "3600");
+  g_tokenExpiryMs = millis() + (unsigned long)(max(0, expiresIn - 60)) * 1000UL;
 
   Serial.println("ID token obtained.");
   return g_idToken.length() > 0;
@@ -227,6 +249,7 @@ void finishPulse() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("WEB_API_KEY len = %d\n", strlen(WEB_API_KEY));
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(DOOR1_PIN, OUTPUT);
@@ -277,30 +300,40 @@ void loop() {
       String payload = http.getString();
       DynamicJsonDocument doc(1024);
       if (!deserializeJson(doc, payload)) {
+
         String ledCmd  = doc["ledCommand"]  | "off";
         String doorCmd = doc["doorCommand"] | "none";
 
-        // LED
-        if (ledCmd == "on") {
-          digitalWrite(LED_PIN, HIGH);
-          updateStatus("on");
-        } else if (ledCmd == "off") {
-          digitalWrite(LED_PIN, LOW);
-          updateStatus("off");
-        } else if (ledCmd == "pulse") {
-          isPulsing = true; pulseCount = 0; pulseTimer = nowMs;
-          digitalWrite(LED_PIN, HIGH);
-          updateStatus("pulsing");
+        // ---- LED: act only when it CHANGES ----
+        if (ledCmd != lastLedCmd) {
+          if (ledCmd == "on") {
+            digitalWrite(LED_PIN, HIGH);
+            updateStatus("on");
+          } else if (ledCmd == "off") {
+            digitalWrite(LED_PIN, LOW);
+            updateStatus("off");
+          } else if (ledCmd == "pulse") {
+            isPulsing = true; pulseCount = 0; pulseTimer = nowMs;
+            digitalWrite(LED_PIN, HIGH);
+            updateStatus("pulsing");
+          }
+          lastLedCmd = ledCmd;
         }
 
-        // Doors
-        if (doorCmd == "door1") triggerDoor(DOOR1_PIN);
-        else if (doorCmd == "door2") triggerDoor(DOOR2_PIN);
+        // ---- DOOR: fire once on CHANGE, then clear to "none" ----
+        if (doorCmd != lastDoorCmd) {
+          if (doorCmd == "door1")      triggerDoor(DOOR1_PIN);
+          else if (doorCmd == "door2") triggerDoor(DOOR2_PIN);
 
-        // Acknowledge & clear one-shot door command
-        String patchUrl = String(RTDB_URL) + "/.json?auth=" + g_idToken;
-        httpsPATCHJson(client, patchUrl, "{\"ledReceived\":true,\"doorCommand\":\"none\"}");
-        updateTimestamp();
+          // ACK + clear (allowed by Step A rule)
+          String patchUrl = String(RTDB_URL) + "/.json?auth=" + g_idToken;
+          bool ok = httpsPATCHJson(client, patchUrl, "{\"doorCommand\":\"none\",\"ledReceived\":true}");
+          if (ok) lastDoorCmd = "none";    // cleared successfully
+          else    lastDoorCmd = doorCmd;   // retry next loop if PATCH failed
+
+          updateTimestamp();
+        }
+
       } else {
         Serial.println("JSON parse error");
       }
