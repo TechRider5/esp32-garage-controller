@@ -9,16 +9,8 @@
     import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // Firebase config
-    const firebaseConfig = {
-      apiKey: "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU",   // ✅ updated key
-      authDomain: "esp32-garage-controller.firebaseapp.com",
-      databaseURL: "https://esp32-garage-controller-default-rtdb.firebaseio.com",
-      projectId: "esp32-garage-controller",
-      storageBucket: "esp32-garage-controller.appspot.com",
-      messagingSenderId: "390563066349",
-      appId: "1:390563066349:web:79232495e3dfb21631f7e4"
-    };
+    // Load config from external file (config.js)
+    import { firebaseConfig } from "./config.js";
 
     // Initialize Firebase
     const app = initializeApp(firebaseConfig);
