@@ -1,75 +1,126 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>ESP32 Garage Controller</title>
   <script type="module">
     // Firebase imports
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import {
+      getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+      getRedirectResult, onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import {
+      getDatabase, ref, set
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     // Load config from external file (config.js)
     import { firebaseConfig } from "./config.js";
 
-    // Initialize Firebase
+    // --- Init ---
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const provider = new GoogleAuthProvider();
     const db = getDatabase(app);
 
-    // Elements
-    const loginBtn = document.getElementById("login-btn");
-    const logoutBtn = document.getElementById("logout-btn");
-    const controls = document.getElementById("controls");
-    const status = document.getElementById("status");
+    // --- Elements ---
+    const loginBtn   = document.getElementById("login-btn");
+    const logoutBtn  = document.getElementById("logout-btn");
+    const statusEl   = document.getElementById("status");
+    const controlsEl = document.getElementById("controls");
+    const errorEl    = document.getElementById("error");
 
-    // Auth buttons
-    loginBtn.onclick = () => signInWithPopup(auth, provider).catch(console.error);
-    logoutBtn.onclick = () => signOut(auth).catch(console.error);
+    const showError = (err) => {
+      console.error(err);
+      errorEl.textContent = (err && err.code) ? `${err.code}: ${err.message}` : String(err || "");
+      errorEl.style.display = "block";
+    };
 
-    // Auth state
-    onAuthStateChanged(auth, user => {
+    // --- Auth UI handlers ---
+    loginBtn.onclick = async () => {
+      errorEl.style.display = "none";
+      try {
+        // Try popup first…
+        await signInWithPopup(auth, provider);
+      } catch (err) {
+        // If popup is blocked/unsupported, fallback to redirect
+        const fallback = [
+          "auth/popup-blocked",
+          "auth/operation-not-supported-in-this-environment",
+          "auth/popup-closed-by-user"
+        ];
+        if (fallback.includes(err.code)) {
+          try {
+            await signInWithRedirect(auth, provider);
+          } catch (e2) {
+            showError(e2);
+          }
+        } else {
+          showError(err);
+        }
+      }
+    };
+
+    logoutBtn.onclick = async () => {
+      errorEl.style.display = "none";
+      try { await signOut(auth); }
+      catch (err) { showError(err); }
+    };
+
+    // Handle redirect result if any (iOS/Safari)
+    getRedirectResult(auth).catch(showError);
+
+    // --- Auth state ---
+    onAuthStateChanged(auth, (user) => {
       if (user) {
-        status.innerText = `Logged in as: ${user.email}`;
+        statusEl.textContent = `Logged in as: ${user.email}`;
         loginBtn.style.display = "none";
-        logoutBtn.style.display = "inline";
-        controls.style.display = "block";
+        logoutBtn.style.display = "inline-block";
+        controlsEl.style.display = "block";
       } else {
-        status.innerText = "Not signed in";
-        loginBtn.style.display = "inline";
+        statusEl.textContent = "Not signed in";
+        loginBtn.style.display = "inline-block";
         logoutBtn.style.display = "none";
-        controls.style.display = "none";
+        controlsEl.style.display = "none";
       }
     });
 
-    // Send command to DB
-    function sendCommand(path, value) {
-      console.log(`Sending ${value} to ${path}`);
+    // --- DB writes (unchanged) ---
+    window.sendCommand = function(path, value) {
+      errorEl.style.display = "none";
       set(ref(db, path), value)
-        .then(() => console.log("✅ Success"))
-        .catch(err => console.error("❌ Error writing to DB:", err));
-    }
-
-    // Expose function globally for HTML buttons
-    window.sendCommand = sendCommand;
+        .then(() => console.log("Wrote", path, value))
+        .catch(showError);
+    };
   </script>
+
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 16px; }
+    h1 { margin-bottom: 8px; }
+    #controls { margin-top: 12px; }
+    button { padding: 8px 12px; margin: 4px 6px 0 0; border-radius: 6px; cursor: pointer; }
+    #error { margin-top: 12px; color: #b00020; display: none; white-space: pre-wrap; }
+  </style>
 </head>
 <body>
   <h1>ESP32 Garage Controller</h1>
 
   <p id="status">Checking login...</p>
-
-  <button id="login-btn">Sign in with Google</button>
+  <button id="login-btn" style="display:none">Sign in with Google</button>
   <button id="logout-btn" style="display:none">Sign Out</button>
 
   <div id="controls" style="display:none">
-    <button onclick="sendCommand('ledCommand', 'on')">LED ON</button>
-    <button onclick="sendCommand('ledCommand', 'off')">LED OFF</button>
-    <button onclick="sendCommand('ledCommand', 'pulse')">LED PULSE</button>
-    <br><br>
-    <button onclick="sendCommand('doorCommand', 'door1')">Open Door 1</button>
-    <button onclick="sendCommand('doorCommand', 'door2')">Open Door 2</button>
+    <div style="margin-top:10px;">
+      <button onclick="sendCommand('ledCommand','on')">LED ON</button>
+      <button onclick="sendCommand('ledCommand','off')">LED OFF</button>
+      <button onclick="sendCommand('ledCommand','pulse')">LED PULSE</button>
+    </div>
+    <div style="margin-top:10px;">
+      <button onclick="sendCommand('doorCommand','door1')">Open Door 1</button>
+      <button onclick="sendCommand('doorCommand','door2')">Open Door 2</button>
+    </div>
   </div>
+
+  <div id="error"></div>
 </body>
 </html>
