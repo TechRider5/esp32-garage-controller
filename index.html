@@ -4,26 +4,24 @@
   <meta charset="UTF-8" />
   <title>ESP32 Garage Controller</title>
   <script type="module">
-    // Firebase imports
+    // Load config from external file
+    import { firebaseConfig } from "./config.js";
+
+    // Firebase SDKs
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {
       getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
       getRedirectResult, onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import {
-      getDatabase, ref, set
-    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // Load config from external file (config.js)
-    import { firebaseConfig } from "./config.js";
-
-    // --- Init ---
+    // Init
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
+    const db   = getDatabase(app);
     const provider = new GoogleAuthProvider();
-    const db = getDatabase(app);
 
-    // --- Elements ---
+    // Elements
     const loginBtn   = document.getElementById("login-btn");
     const logoutBtn  = document.getElementById("logout-btn");
     const statusEl   = document.getElementById("status");
@@ -36,25 +34,32 @@
       errorEl.style.display = "block";
     };
 
-    // --- Auth UI handlers ---
+    // Show login by default; watchdog so UI never sticks
+    loginBtn.style.display = "inline-block";
+    statusEl.textContent = "Checking login…";
+    let authStateFired = false;
+    setTimeout(() => {
+      if (!authStateFired) {
+        statusEl.textContent = "Not signed in";
+        loginBtn.style.display = "inline-block";
+        logoutBtn.style.display = "none";
+        controlsEl.style.display = "none";
+      }
+    }, 2000);
+
     loginBtn.onclick = async () => {
       errorEl.style.display = "none";
       try {
-        // Try popup first…
         await signInWithPopup(auth, provider);
       } catch (err) {
-        // If popup is blocked/unsupported, fallback to redirect
         const fallback = [
           "auth/popup-blocked",
           "auth/operation-not-supported-in-this-environment",
           "auth/popup-closed-by-user"
         ];
         if (fallback.includes(err.code)) {
-          try {
-            await signInWithRedirect(auth, provider);
-          } catch (e2) {
-            showError(e2);
-          }
+          try { await signInWithRedirect(auth, provider); }
+          catch (e2) { showError(e2); }
         } else {
           showError(err);
         }
@@ -63,15 +68,13 @@
 
     logoutBtn.onclick = async () => {
       errorEl.style.display = "none";
-      try { await signOut(auth); }
-      catch (err) { showError(err); }
+      try { await signOut(auth); } catch (err) { showError(err); }
     };
 
-    // Handle redirect result if any (iOS/Safari)
     getRedirectResult(auth).catch(showError);
 
-    // --- Auth state ---
     onAuthStateChanged(auth, (user) => {
+      authStateFired = true;
       if (user) {
         statusEl.textContent = `Logged in as: ${user.email}`;
         loginBtn.style.display = "none";
@@ -85,28 +88,26 @@
       }
     });
 
-    // --- DB writes (unchanged) ---
-    window.sendCommand = function(path, value) {
+    // DB writes
+    window.sendCommand = (path, value) => {
       errorEl.style.display = "none";
-      set(ref(db, path), value)
-        .then(() => console.log("Wrote", path, value))
-        .catch(showError);
+      set(ref(db, path), value).catch(showError);
     };
   </script>
 
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 16px; }
-    h1 { margin-bottom: 8px; }
-    #controls { margin-top: 12px; }
-    button { padding: 8px 12px; margin: 4px 6px 0 0; border-radius: 6px; cursor: pointer; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 32px; }
+    h1 { margin: 0 0 12px; font-size: 48px; }
+    #controls { margin-top: 16px; }
+    button { padding: 9px 14px; margin: 6px 8px 0 0; border-radius: 8px; cursor: pointer; }
     #error { margin-top: 12px; color: #b00020; display: none; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <h1>ESP32 Garage Controller</h1>
 
-  <p id="status">Checking login...</p>
-  <button id="login-btn" style="display:none">Sign in with Google</button>
+  <p id="status">Checking login…</p>
+  <button id="login-btn">Sign in with Google</button>
   <button id="logout-btn" style="display:none">Sign Out</button>
 
   <div id="controls" style="display:none">
