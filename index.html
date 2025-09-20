@@ -4,10 +4,18 @@
   <meta charset="UTF-8" />
   <title>ESP32 Garage Controller</title>
   <script type="module">
-    // Load config from external file
-    import { firebaseConfig } from "./config.js";
+    // ---- TEMP: inline config to rule out config.js path/caching issues ----
+    const firebaseConfig = {
+      apiKey: "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU",
+      authDomain: "esp32-garage-controller.firebaseapp.com",
+      databaseURL: "https://esp32-garage-controller-default-rtdb.firebaseio.com",
+      projectId: "esp32-garage-controller",
+      storageBucket: "esp32-garage-controller.appspot.com",
+      messagingSenderId: "390563066349",
+      appId: "1:390563066349:web:79232495e3dfb21631f7e4"
+    };
 
-    // Firebase SDKs
+    // SDKs
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import {
       getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
@@ -15,67 +23,46 @@
     } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // Init
+    // --- boot log helpers ---
+    const log = (m)=>{console.log(m); document.getElementById("log").textContent += m+"\n";};
+    const showErr = (e)=>{console.error(e); document.getElementById("error").textContent = (e?.code? e.code+": ":"")+ (e?.message||String(e)); document.getElementById("error").style.display="block";};
+
+    log("boot A");
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db   = getDatabase(app);
     const provider = new GoogleAuthProvider();
+    log("boot B: app/auth/db ready");
 
-    // Elements
     const loginBtn   = document.getElementById("login-btn");
     const logoutBtn  = document.getElementById("logout-btn");
     const statusEl   = document.getElementById("status");
     const controlsEl = document.getElementById("controls");
-    const errorEl    = document.getElementById("error");
 
-    const showError = (err) => {
-      console.error(err);
-      errorEl.textContent = (err && err.code) ? `${err.code}: ${err.message}` : String(err || "");
-      errorEl.style.display = "block";
-    };
-
-    // Show login by default; watchdog so UI never sticks
     loginBtn.style.display = "inline-block";
     statusEl.textContent = "Checking login…";
-    let authStateFired = false;
-    setTimeout(() => {
-      if (!authStateFired) {
-        statusEl.textContent = "Not signed in";
-        loginBtn.style.display = "inline-block";
-        logoutBtn.style.display = "none";
-        controlsEl.style.display = "none";
-      }
-    }, 2000);
 
-    loginBtn.onclick = async () => {
-      errorEl.style.display = "none";
+    let fired = false;
+    setTimeout(()=>{ if(!fired){ statusEl.textContent="Not signed in"; } }, 2000);
+
+    loginBtn.onclick = async ()=>{
       try {
         await signInWithPopup(auth, provider);
       } catch (err) {
-        const fallback = [
-          "auth/popup-blocked",
-          "auth/operation-not-supported-in-this-environment",
-          "auth/popup-closed-by-user"
-        ];
+        const fallback = ["auth/popup-blocked","auth/operation-not-supported-in-this-environment","auth/popup-closed-by-user"];
         if (fallback.includes(err.code)) {
           try { await signInWithRedirect(auth, provider); }
-          catch (e2) { showError(e2); }
-        } else {
-          showError(err);
-        }
+          catch(e2){ showErr(e2); }
+        } else showErr(err);
       }
     };
+    logoutBtn.onclick = ()=>signOut(auth).catch(showErr);
 
-    logoutBtn.onclick = async () => {
-      errorEl.style.display = "none";
-      try { await signOut(auth); } catch (err) { showError(err); }
-    };
+    getRedirectResult(auth).catch(showErr);
 
-    getRedirectResult(auth).catch(showError);
-
-    onAuthStateChanged(auth, (user) => {
-      authStateFired = true;
-      if (user) {
+    onAuthStateChanged(auth, user=>{
+      fired = true;
+      if (user){
         statusEl.textContent = `Logged in as: ${user.email}`;
         loginBtn.style.display = "none";
         logoutBtn.style.display = "inline-block";
@@ -86,42 +73,32 @@
         logoutBtn.style.display = "none";
         controlsEl.style.display = "none";
       }
+      log("auth state fired");
     });
 
-    // DB writes
-    window.sendCommand = (path, value) => {
-      errorEl.style.display = "none";
-      set(ref(db, path), value).catch(showError);
-    };
+    // DB write test
+    window.sendCommand = (path, val)=> set(ref(db, path), val).then(()=>log(`Wrote ${path}=${val}`)).catch(showErr);
   </script>
-
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 32px; }
-    h1 { margin: 0 0 12px; font-size: 48px; }
-    #controls { margin-top: 16px; }
-    button { padding: 9px 14px; margin: 6px 8px 0 0; border-radius: 8px; cursor: pointer; }
-    #error { margin-top: 12px; color: #b00020; display: none; white-space: pre-wrap; }
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:32px}
+    h1{margin:0 0 12px;font-size:48px}
+    button{padding:9px 14px;margin:6px 8px 0 0;border-radius:8px;cursor:pointer}
+    #error{color:#b00020;margin-top:10px;display:none;white-space:pre-wrap}
+    pre{background:#f6f7f9;border-radius:8px;padding:10px;margin-top:12px;max-width:700px;overflow:auto}
   </style>
 </head>
 <body>
   <h1>ESP32 Garage Controller</h1>
-
   <p id="status">Checking login…</p>
   <button id="login-btn">Sign in with Google</button>
   <button id="logout-btn" style="display:none">Sign Out</button>
 
   <div id="controls" style="display:none">
-    <div style="margin-top:10px;">
-      <button onclick="sendCommand('ledCommand','on')">LED ON</button>
-      <button onclick="sendCommand('ledCommand','off')">LED OFF</button>
-      <button onclick="sendCommand('ledCommand','pulse')">LED PULSE</button>
-    </div>
-    <div style="margin-top:10px;">
-      <button onclick="sendCommand('doorCommand','door1')">Open Door 1</button>
-      <button onclick="sendCommand('doorCommand','door2')">Open Door 2</button>
-    </div>
+    <button onclick="sendCommand('doorCommand','door1')">Open Door 1</button>
+    <button onclick="sendCommand('doorCommand','door2')">Open Door 2</button>
   </div>
 
   <div id="error"></div>
+  <pre id="log"></pre>
 </body>
 </html>
