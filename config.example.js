@@ -1,5 +1,5 @@
 export const firebaseConfig = {
-      apiKey: "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU",   // ✅ updated key
+      apiKey: "uifnreiuptnfpiernkirrngunjrdfnh",   // ✅ updated key
       authDomain: "esp32-garage-controller.firebaseapp.com",
       databaseURL: "https://esp32-garage-controller-default-rtdb.firebaseio.com",
       projectId: "esp32-garage-controller",
