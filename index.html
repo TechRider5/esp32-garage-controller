@@ -5,9 +5,11 @@
   <title>ESP32 Garage Controller</title>
   <script type="module">
 
+   // Load config from external file
+    import { firebaseConfig } from "./config.js";
 
 
-//inline config to rule out config.js path/caching issues ----
+/* //inline config to rule out config.js path/caching issues ----
     const firebaseConfig = {
       apiKey: "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU",
       authDomain: "esp32-garage-controller.firebaseapp.com",
@@ -17,6 +19,7 @@
       messagingSenderId: "390563066349",
       appId: "1:390563066349:web:79232495e3dfb21631f7e4"
     };
+*/
    
     // SDKs
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
