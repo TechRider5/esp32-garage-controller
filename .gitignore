@@ -4,5 +4,5 @@
 .vscode/launch.json
 .vscode/ipch
 .env
-config.js
-secrets.h
+.config.js
+.src/secrets.h
