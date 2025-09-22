@@ -5,4 +5,4 @@
 .vscode/ipch
 .env
 .config.js
-.src/secrets.h
+.secrets.h
