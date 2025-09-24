@@ -1,3 +1,4 @@
+#include "secrets.h" 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -5,11 +6,6 @@
 #include <time.h>
 #include <WiFiManager.h>
 
-// ========= FILL THESE =========
-const char* TOKEN_SERVER_URL = "https://quincy-garage.vercel.app/api/iot-token";  // your Vercel route
-const char* IOT_API_KEY      = "7f9c2ba4e88f827d616045507605853ed73b8093f6b0f7f0a5b1c2d3e4f50617"; // same as Vercel env
-const char* WEB_API_KEY      = "AIzaSyARbvYIFIRMZsHjk4E6UoWN7FKmAagO0yU"; // from firebaseConfig in index.html
-const char* DEVICE_ID        = "esp32-1"; // label for this device
 
 // ========= CONSTANTS =========
 const char* RTDB_URL = "https://esp32-garage-controller-default-rtdb.firebaseio.com"; // no trailing slash
