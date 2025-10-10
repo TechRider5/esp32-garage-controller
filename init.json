@@ -1,7 +1,0 @@
-{
-  "ledCommand": "off",
-  "doorCommand": "none",
-  "ledReceived": false,
-  "ledStatus": "off",
-  "lastUpdated": ""
-}
