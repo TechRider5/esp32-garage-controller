@@ -21,6 +21,11 @@ export function useAuth() {
 
   const actions = useMemo(() => ({
     async signIn() {
+      // Use redirect in production to avoid popup blockers and cross-site issues
+      if (process.env.NODE_ENV === "production") {
+        await signInWithRedirect(auth, provider as GoogleAuthProvider);
+        return;
+      }
       try {
         await signInWithPopup(auth, provider as GoogleAuthProvider);
       } catch (err: unknown) {
