@@ -23,8 +23,8 @@ export function useAuth() {
     async signIn() {
       try {
         await signInWithPopup(auth, provider as GoogleAuthProvider);
-      } catch (err: any) {
-        const code = err?.code as string | undefined;
+      } catch (err: unknown) {
+        const code = typeof err === "object" && err && "code" in err ? (err as { code?: string }).code : undefined;
         const fallback = ["auth/popup-blocked", "auth/operation-not-supported-in-this-environment", "auth/popup-closed-by-user"]; 
         if (code && fallback.includes(code)) {
           await signInWithRedirect(auth, provider as GoogleAuthProvider);

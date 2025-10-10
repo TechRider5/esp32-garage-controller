@@ -34,7 +34,8 @@ export function useAccessControl(user: User | null) {
         }
       } else {
         setApproved(!!val.approved);
-        setRole((val.role as any) || (user.email === ADMIN_EMAIL ? "admin" : "user"));
+        const roleValue = (val.role as "admin" | "user" | undefined);
+        setRole(roleValue || (user.email === ADMIN_EMAIL ? "admin" : "user"));
       }
       setLoading(false);
     });

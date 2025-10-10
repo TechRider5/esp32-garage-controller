@@ -24,8 +24,11 @@ export async function POST(req: NextRequest) {
   try {
     const customToken = await adminAuth.createCustomToken(deviceId, { kind: "iot", deviceId });
     return NextResponse.json({ customToken });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Token error" }, { status: 500 });
+  } catch (err: unknown) {
+    const message = (typeof err === "object" && err && "toString" in err)
+      ? String(err)
+      : "Token error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

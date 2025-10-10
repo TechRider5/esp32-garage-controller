@@ -5,9 +5,10 @@ import { getDatabase } from "firebase-admin/database";
 let adminApp: App | undefined;
 
 if (!getApps().length) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_KEY || "{}");
+  const raw = process.env.FIREBASE_ADMIN_SDK_KEY || "{}";
+  const serviceAccount: Record<string, unknown> = JSON.parse(raw);
   adminApp = initializeApp({
-    credential: cert(serviceAccount as any),
+    credential: cert(serviceAccount as { [key: string]: string }),
     databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
   });
 } else {

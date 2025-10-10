@@ -3,7 +3,7 @@ import { ReactNode } from "react";
 import { useAuth } from "@/app/hooks/useAuth";
 
 export default function AuthGuard({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, signOut } = useAuth();
+  const { user, loading, signIn } = useAuth();
 
   if (loading) return <div>Loading…</div>;
   if (!user)
