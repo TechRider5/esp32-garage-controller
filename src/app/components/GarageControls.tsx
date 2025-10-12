@@ -2,6 +2,7 @@
 import { db } from "@/app/lib/firebase";
 import { onValue, ref, set } from "firebase/database";
 import { useEffect, useState } from "react";
+import GarageDoorButton from "./GarageDoorButton";
 
 export default function GarageControls() {
   const [ledStatus, setLedStatus] = useState<string>("off");
@@ -26,14 +27,32 @@ export default function GarageControls() {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex gap-2">
-        <button onClick={() => send("door1")} className="rounded border px-3 py-2">Open Door 1</button>
-        <button onClick={() => send("door2")} className="rounded border px-3 py-2">Open Door 2</button>
+    <div className="flex flex-col items-center gap-8">
+      {/* Garage Door Buttons */}
+      <div className="flex flex-col sm:flex-row gap-8 items-center">
+        <GarageDoorButton doorNumber={1} onTrigger={send} />
+        <GarageDoorButton doorNumber={2} onTrigger={send} />
       </div>
-      <div className="text-sm text-gray-600">LED: {ledStatus}</div>
-      {lastUpdated && <div className="text-xs text-gray-500">Last updated: {new Date(lastUpdated * 1000).toLocaleString()}</div>}
-      {error && <div className="text-sm text-red-500">Error: {error}</div>}
+
+      {/* Status Display */}
+      <div className="bg-white/10 backdrop-blur-lg rounded-lg p-4 border border-white/20">
+        <div className="flex items-center gap-4 text-white">
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${ledStatus === 'online' ? 'bg-green-400' : 'bg-red-400'}`}></div>
+            <span className="text-sm font-medium">Status: {ledStatus}</span>
+          </div>
+          {lastUpdated && (
+            <div className="text-xs text-white/70">
+              Last updated: {new Date(lastUpdated * 1000).toLocaleString()}
+            </div>
+          )}
+        </div>
+        {error && (
+          <div className="mt-2 text-sm text-red-300 bg-red-500/20 rounded px-3 py-2">
+            Error: {error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

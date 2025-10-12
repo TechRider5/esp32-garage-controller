@@ -1,18 +1,23 @@
 "use client";
 import { ReactNode } from "react";
 import { useAuth } from "@/app/hooks/useAuth";
+import SignInCard from "./SignInCard";
 
 export default function AuthGuard({ children }: { children: ReactNode }) {
-  const { user, loading, signIn } = useAuth();
+  const { user, loading } = useAuth();
 
-  if (loading) return <div>Loading…</div>;
-  if (!user)
+  if (loading) {
     return (
-      <div className="flex flex-col gap-3">
-        <p>You must sign in to continue.</p>
-        <button onClick={signIn} className="rounded border px-3 py-2">Sign in with Google</button>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
+  }
+  
+  if (!user) {
+    return <SignInCard />;
+  }
+  
   return <>{children}</>;
 }
 
