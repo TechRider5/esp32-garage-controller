@@ -60,7 +60,7 @@ export default function Navbar() {
               </button>
               
               {showThemePicker && (
-                <div className="absolute right-0 mt-2 w-48 bg-white/10 backdrop-blur-lg rounded-lg shadow-lg border border-white/20 py-2">
+                <div className="absolute right-0 mt-2 w-48 bg-black/90 backdrop-blur-lg rounded-lg shadow-lg border border-white/20 py-2">
                   {themes.map((theme) => (
                     <button
                       key={theme.name}
